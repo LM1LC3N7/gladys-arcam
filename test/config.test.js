@@ -1,33 +1,43 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { normalizeConfig, parseAddress, parseMaxVolume, platformId } from '../src/config.js';
+import { MAX_VOLUME } from '../src/constants.js';
 
-test('normalizeConfig returns the defaults when called with no argument', () => {
-  assert.deepEqual(normalizeConfig(), DEFAULT_CONFIG);
+test('the defaults: no address, the default cap', () => {
+  assert.deepEqual(normalizeConfig(), {
+    addresses: [],
+    invalid: [],
+    maxVolume: MAX_VOLUME.default,
+  });
 });
 
-test('normalizeConfig keeps user values over the defaults', () => {
-  const config = normalizeConfig({ latitude: 45.5, longitude: -73.6, unit: 'fahrenheit' });
-  assert.equal(config.latitude, 45.5);
-  assert.equal(config.longitude, -73.6);
-  assert.equal(config.unit, 'fahrenheit');
+test('addresses: IPv4 or host name, port 50000 by default, duplicates and junk set aside', () => {
+  const config = normalizeConfig({
+    addresses: '192.168.1.40, 192.168.1.40:50000; avr.local:6000 tcp://10.0.0.2/x nope! 999.1.1.1',
+  });
+  assert.deepEqual(config.addresses, [
+    { host: '192.168.1.40', port: 50000 },
+    { host: 'avr.local', port: 6000 },
+    { host: '10.0.0.2', port: 50000 },
+  ]);
+  assert.deepEqual(config.invalid, ['nope!', '999.1.1.1']);
+  assert.equal(parseAddress(''), undefined);
+  assert.equal(parseAddress('host:0'), undefined);
+  assert.equal(parseAddress('host:70000'), undefined);
+  assert.equal(parseAddress('[::1]'), undefined);
 });
 
-test('normalizeConfig coerces numeric strings coming from a form', () => {
-  const config = normalizeConfig({ latitude: '48.8', longitude: '2.3', poll_frequency: '600' });
-  assert.equal(config.latitude, 48.8);
-  assert.equal(config.longitude, 2.3);
-  assert.equal(config.poll_frequency, 600);
-  assert.equal(typeof config.poll_frequency, 'number');
+test('the platform id of an address is stable and has no separator of the external ids', () => {
+  assert.equal(platformId({ host: '192.168.1.40', port: 50000 }), '192.168.1.40_50000');
+  assert.ok(!platformId({ host: 'avr.local', port: 6000 }).includes(':'));
 });
 
-test('normalizeConfig falls back to the default for a missing numeric field', () => {
-  const config = normalizeConfig({ unit: 'celsius' });
-  assert.equal(config.poll_frequency, DEFAULT_CONFIG.poll_frequency);
-});
-
-test('GLADYS_PREFER_LOCAL defaults to true and only an explicit false disables it', () => {
-  assert.equal(normalizeConfig().GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: true }).GLADYS_PREFER_LOCAL, true);
-  assert.equal(normalizeConfig({ GLADYS_PREFER_LOCAL: false }).GLADYS_PREFER_LOCAL, false);
+test('the volume cap: an integer 1..99, the default for anything unreadable', () => {
+  assert.equal(parseMaxVolume('30'), 30);
+  assert.equal(parseMaxVolume(12.6), 13);
+  assert.equal(parseMaxVolume(0), 1);
+  assert.equal(parseMaxVolume(150), 99);
+  for (const bad of [null, undefined, '', ' ', 'abc', true, NaN]) {
+    assert.equal(parseMaxVolume(bad), MAX_VOLUME.default, String(bad));
+  }
 });

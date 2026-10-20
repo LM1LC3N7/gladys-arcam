@@ -1,61 +1,119 @@
-# Demo Devices Template
+# Arcam for Gladys
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Control your **Arcam** AV receivers, processors and amplifiers (AVR, AV, SA,
+ST and PA series, and the JBL Synthesis SDP-55 and SDP-58 processors
+sharing the protocol) from Gladys, locally, without any cloud: power on, standby,
+volume, mute, source and audio mode of zone 1.
+
+> **Important.** This integration has never been tested with a real device:
+> it was written from the `arcam-fmj` library (the one of Home Assistant) and
+> tested against a fake device only. Feedback is welcome. Unofficial
+> integration, not affiliated with Arcam.
+
+## Installation
+
+1. On the device, turn **IP control** on (setup menu, network settings or
+   "Control") and, to be able to power it on from Gladys, keep the **network
+   on in standby** (for example "HDMI & IP On" in standby on the AVRs,
+   "Network standby" on the SA amplifiers).
+2. Give the device a **fixed IP address** in your router (DHCP reservation):
+   the address is the identity of the device in Gladys.
+3. In Gladys, install the **Arcam** integration, then open its
+   configuration.
+4. Type the IP addresses, separated by commas (for example
+   `192.168.1.40, 192.168.1.41`; port 50000 by default). The **Find the
+   devices** button can also look for them (SSDP search, optional: it cannot
+   cross every network).
+5. Choose the **volume cap** (40 by default, on the 0 to 99 scale of the
+   display).
+6. The devices appear in the **Discovery** tab: create them.
+
+The integration keeps a TCP connection open with each device (port 50000):
+changes made on the device, its remote or the Arcam app reach Gladys at once.
+Some devices accept a single IP control client at a time: if another app can
+no longer connect, this may be why.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+| Feature    | Gladys type                | Note                                                      |
+| ---------- | -------------------------- | --------------------------------------------------------- |
+| Power      | binary state (read only)   | 1 on, 0 in standby or unreachable                         |
+| Power on   | button                     | only when the network stays on in standby                 |
+| Standby    | button                     | puts the device in standby                                |
+| Volume     | music / volume (0 to 99)   | the display scale, capped; not on the PA power amplifiers |
+| Mute       | button (television / mute) | each press reads the state then sets the opposite         |
+| Source     | list                       | the inputs of the model; the list only grows              |
+| Audio mode | list                       | stereo (2 ch) and multi-channel decode modes; AVRs only   |
 
-## Configuration
+On purpose, no **switch**: an "everything off" or "everything on" from a
+voice assistant or a scene neither wakes up nor cuts your amplifier.
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+The model is read at connection (the AMX answer of the device): it picks the
+sources, the audio modes and the way each command is sent (direct write on
+the SA, ST and PA series, RC5 remote codes on the AVRs). An unknown model is
+handled as the AVR450 series, as `arcam-fmj` does.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+## Volume cap
 
-## Actions
+The volume asked from Gladys (dashboard, scene, voice assistant) never goes
+above the cap of the configuration: a higher volume is set to the cap. The
+cap is read again just before sending: a new value saved applies at once. The
+volume set on the device itself (knob, remote, app) is not changed by the
+integration, except in two cases where Gladys would make it heard:
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+- **Unmute**: when the volume of the device is above the cap, it is first
+  lowered to the cap, then the mute is removed. When the volume cannot be
+  read, nothing is sent.
+- **Power on**: after the wake-up, the volume is read again and lowered to
+  the cap when above it. When the device is slow to wake up, the integration
+  checks again every 2.5 s for about 15 s; after that, the volume is not
+  corrected.
 
-## Scenes
+## Audio mode
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+The decode modes depend on the incoming signal: stereo (PCM, analogue) or
+multi-channel (Dolby, DTS...). The list shows both kinds, marked "(2 ch)"
+and "(multi-ch)". Before each change, the signal format is read again: a
+mode of the other kind is refused, nothing sent.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+## Standby and reconnection
 
-## Dashboard
+- In **standby with the network on**, the device stays reachable: the Power
+  state goes to 0, the Power on button wakes it up, and the other commands
+  are refused by the device ("Refused by the device").
+- In **standby without network**, or switched off, the device no longer
+  answers: it shows as off, is named in the integration status, and the
+  integration tries to connect again at spaced intervals (10 s, then doubled
+  after each failure, up to 5 minutes). Power on cannot do anything then.
+- The address is the identity of the device: when it changes, a new device
+  appears in Discovery. Hence the fixed IP address.
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+## Commands
 
-## Troubleshooting
+Every command is answered within 4 seconds (Gladys waits 5 seconds). A
+command sent to the device without confirmation is reported "sent, without
+confirmation"; the state pushed by the device then shows what it did. A
+command that could not leave is reported "nothing sent": this is the case of
+every command, Standby included, to a device that is not connected. Standby
+and mute go before the commands waiting.
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+## Configuration buttons
+
+- **Find the devices**: SSDP search by Gladys, then every local address that
+  answers is asked on port 50000.
+- **Check the devices**: the connection, power and volume of each device, and
+  the cap in force.
+
+## Data and privacy
+
+The integration needs no account nor password: Arcam IP control has none. It
+keeps in `/data/arcam.json` the list of the known devices (address, model,
+revision, list options). Nothing leaves your local network.
+
+## Known limits
+
+- Zone 1 only (no zone 2 yet).
+- No radio presets, DAB/FM information, equalizer, balance or display
+  brightness yet.
+- On the ST60, the "Network / USB" input is not shown as a source.
+- Never tested with a real device: the real answers may differ.

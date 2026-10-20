@@ -12,44 +12,36 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Arcam AV receivers, processors and amplifiers over their local IP control
+  (TCP port 50000), without any cloud: added by IP address, or found with an
+  optional SSDP search through Gladys.
+- Zone 1: power state (read only), "Power on" and "Standby" buttons, volume
+  (0 to 99, the display scale, validated strictly, capped by the new
+  `max_volume` option, 40 by default), mute (each press reads the mute and
+  sets the opposite), a "Source" dropdown and an "Audio mode" dropdown (decode
+  modes, checked against the incoming signal), read and set. Every command is
+  answered to Gladys within 4 seconds, or dropped, never sent late.
+- The model is read from the device (AMX) and picks the sources, the audio
+  modes and how each command is sent (direct writes on the SA, ST and PA
+  series, RC5 codes on the AVRs), as arcam-fmj; it is kept in `/data` for a
+  device that does not answer the AMX request.
+- Changes made on the device, its remote or its app are pushed to Gladys
+  (grouped, at most once a second per device).
+- A device in standby without network, off or unreachable shows its power at
+  0 and is named in the integration status; the connection is opened again
+  after 10 s, then at intervals doubled up to 5 minutes.
+- "Find the devices" and "Check the devices" buttons.
+- Unmuting lowers a volume above the cap to the cap first; Power on brings
+  the volume back to the cap after the wake-up.
+- Standby and mute go before the commands waiting for a device.
 
-### Changed
+### Security
 
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
+- Frames are cut linearly from at most 4 KB waiting; an AMX line is 512 bytes
+  at most and only its known keys are kept; a connection flooded with frames
+  is closed. The device table of `/data` has no prototype, and a value of a
+  dropdown that is not a plain identifier is refused.
+- The SSDP search only connects to local network addresses (no public,
+  loopback, broadcast, multicast or cloud metadata address).
 
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-arcam/commits/main
