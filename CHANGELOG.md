@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
 ### Added
 
 - Arcam AV receivers, processors and amplifiers over their local IP control
@@ -61,4 +63,5 @@ the notes of the version's GitHub Release.
 - The SSDP search only connects to local network addresses (no public,
   loopback, broadcast, multicast or cloud metadata address).
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-arcam/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-arcam/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-arcam/releases/tag/v0.1.1
