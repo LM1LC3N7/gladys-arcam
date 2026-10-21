@@ -28,6 +28,10 @@ export async function startFakeDevice({
   port = 0,
   amx = true,
   silent = false,
+  delays = {},
+  silentCodes = [],
+  refuse = [],
+  bootMs = 0,
   state: initial = {},
 } = {}) {
   const family = familyOf(model);
@@ -122,11 +126,41 @@ export async function startFakeDevice({
   }
 
   function handle(socket, zone, cc, data) {
-    commands.push({ zone, cc, data: [...data] });
-    if (fake.silent) {
+    commands.push({ zone, cc, data: [...data], at: Date.now() });
+    if (fake.silent || fake.silentCodes.has(cc)) {
       return;
     }
+    const delay = fake.delays[cc] ?? 0;
+    if (delay > 0) {
+      setTimeout(() => {
+        if (!socket.destroyed) {
+          respond(socket, zone, cc, data);
+        }
+      }, delay);
+      return;
+    }
+    respond(socket, zone, cc, data);
+  }
+
+  function respond(socket, zone, cc, data) {
     const answer = (ac, bytes) => socket.write(encodeAnswer(zone, cc, ac, bytes));
+    if (data.length === 1 && data[0] === QUERY && fake.refuse.has(cc)) {
+      answer(ANSWER.COMMAND_INVALID_AT_THIS_TIME, []);
+      return;
+    }
+    if (
+      cc === CC.SIMULATE_RC5 &&
+      fake.bootMs > 0 &&
+      sameBytes(REQUESTS.power(family, true).data, [...data])
+    ) {
+      // A slow wake-up: the code is acknowledged now, the power comes later.
+      answer(ANSWER.OK, data);
+      setTimeout(() => {
+        state.power = 1;
+        push(CC.POWER);
+      }, fake.bootMs);
+      return;
+    }
     if (zone !== 1) {
       answer(ANSWER.ZONE_INVALID, []);
       return;
@@ -225,6 +259,14 @@ export async function startFakeDevice({
     commands,
     amx,
     silent,
+    /** cc -> answer delay in ms */
+    delays: { ...delays },
+    /** codes never answered */
+    silentCodes: new Set(silentCodes),
+    /** codes whose read is refused (invalid at this time) */
+    refuse: new Set(refuse),
+    /** > 0: the RC5 power on is acknowledged, the power turns on this much later */
+    bootMs,
     connections: () => connections,
     /** Changes a state on the device (front panel, remote) and pushes it. */
     change(cc, field, value) {

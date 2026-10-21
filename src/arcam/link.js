@@ -89,6 +89,8 @@ export class DeviceLink {
     this.refreshTimer = undefined;
     this.wakeTimer = undefined;
     this.frames = [];
+    /** The read chain running: { session, promise } */
+    this.reading = undefined;
     /** The last error of a connection attempt (shown by "Check"). */
     this.lastError = undefined;
     /** The AMX identification: { make, model, revision }. */
@@ -235,7 +237,22 @@ export class DeviceLink {
   }
 
   /** Asks every state of zone 1 the family knows; the answers land in `answer`. */
-  async readSnapshot(session, { skipPower = false } = {}) {
+  readSnapshot(session, options) {
+    // One read chain at a time: a second one (wake read, 5-minute refresh)
+    // joins the one running.
+    if (this.reading?.session === session) {
+      return this.reading.promise;
+    }
+    const promise = this.runSnapshot(session, options).finally(() => {
+      if (this.reading?.promise === promise) {
+        this.reading = undefined;
+      }
+    });
+    this.reading = { session, promise };
+    return promise;
+  }
+
+  async runSnapshot(session, { skipPower = false } = {}) {
     for (const cc of SNAPSHOT) {
       if ((skipPower && cc === CC.POWER) || !supports(this.family, cc) || !session.open) {
         continue;

@@ -31,7 +31,11 @@ volume, sourdine, source et mode audio de la zone 1.
 L'intégration garde une connexion TCP ouverte avec chaque appareil (port 50000) : les changements faits sur l'appareil, sa télécommande ou
 l'application Arcam arrivent tout de suite dans Gladys. Certains appareils
 n'acceptent qu'un seul client de contrôle IP à la fois : si une autre
-application ne s'y connecte plus, c'est peut-être la raison.
+application ne s'y connecte plus, c'est peut-être la raison. Seuls les
+appareils saisis, créés dans Gladys, ou trouvés par la dernière recherche
+(jusqu'à leur création) ont une connexion. Saisissez des adresses IPv4
+seulement (pas de nom d'hôte) : un même appareil saisi sous deux noms
+apparaîtrait deux fois.
 
 ## Ce que vous obtenez
 
@@ -67,8 +71,9 @@ dans deux cas où Gladys le rendrait audible :
   ne peut pas être lu, rien n'est envoyé.
 - **Allumer** : après le réveil, le volume est relu et ramené au plafond s'il
   le dépasse. Si l'appareil met du temps à se réveiller, l'intégration
-  revérifie toutes les 2,5 s pendant 15 s environ ; au-delà, le volume n'est
-  pas corrigé.
+  revérifie toutes les 2,5 s pendant 15 s environ, puis, jusqu'à 2 minutes
+  après l'appui, ramène au plafond le volume dès que l'appareil allumé le
+  donne. Une fois le volume vu sous le plafond, il n'est plus touché.
 
 ## Mode audio
 

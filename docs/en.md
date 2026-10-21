@@ -31,7 +31,10 @@ volume, mute, source and audio mode of zone 1.
 The integration keeps a TCP connection open with each device (port 50000):
 changes made on the device, its remote or the Arcam app reach Gladys at once.
 Some devices accept a single IP control client at a time: if another app can
-no longer connect, this may be why.
+no longer connect, this may be why. Only the devices typed, created in
+Gladys, or found by the last search (until they are created) get a
+connection. Type IPv4 addresses only (no host name): one device typed under
+two names would show twice.
 
 ## What you get
 
@@ -66,8 +69,9 @@ integration, except in two cases where Gladys would make it heard:
   read, nothing is sent.
 - **Power on**: after the wake-up, the volume is read again and lowered to
   the cap when above it. When the device is slow to wake up, the integration
-  checks again every 2.5 s for about 15 s; after that, the volume is not
-  corrected.
+  checks again every 2.5 s for about 15 s, then, up to 2 minutes after the
+  press, lowers the volume to the cap as soon as the device, on, reports it.
+  Once the volume was seen under the cap, it is left alone.
 
 ## Audio mode
 

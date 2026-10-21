@@ -79,6 +79,12 @@ export const TIMINGS = Object.freeze({
    */
   wakeCheckDelay: 2_500,
   wakeChecks: 6,
+  /**
+   * After a Power on of Gladys: for this long, the first update that shows
+   * the device on with its volume known lowers it to the cap when above
+   * (a device slower to wake up than the checks above).
+   */
+  wakeWindow: 120_000,
   /** The states of one device are published at most this often (a knob turned fast). */
   publishDelay: 1_000,
   /** Writes to /data are grouped. */

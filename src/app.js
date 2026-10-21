@@ -50,17 +50,15 @@ const URGENT = new Set([FEATURES.STANDBY, FEATURES.MUTE]);
  * Whether an address answered by SSDP may be connected to: an IPv4 address
  * of a local network (10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 but
  * the cloud metadata address 169.254.169.254). Public, loopback, "this
- * network" (0/8), broadcast and multicast addresses are never asked. The
+ * network" (0/8), the limited broadcast and multicast addresses are never
+ * asked; an address ending in .255 can be a host of a /16 and is kept. The
  * addresses typed by the user are not filtered: they are the user's choice.
  */
 export function isLanAddress(host) {
-  if (typeof host !== 'string' || isIP(host) !== 4) {
+  if (typeof host !== 'string' || isIP(host) !== 4 || host === '169.254.169.254') {
     return false;
   }
-  const [a, b, c, d] = host.split('.').map(Number);
-  if (host === '169.254.169.254' || d === 255 || (a === 255 && b === 255 && c === 255)) {
-    return false;
-  }
+  const [a, b] = host.split('.').map(Number);
   return (
     a === 10 ||
     (a === 172 && b >= 16 && b <= 31) ||
@@ -149,6 +147,15 @@ export class ArcamApp {
     this.publishTimers = new Map();
     /** device id -> { timer }: the one wake-up check chain of a device (after Power on) */
     this.wakeChecks = new Map();
+    /**
+     * device id -> until when (this.now()) a Power on of Gladys is followed:
+     * the first update that shows the device on above the cap lowers it.
+     */
+    this.wakeWindows = new Map();
+    /** ids whose wake-window cap is queued or running */
+    this.wakeCapping = new Set();
+    /** ids of the devices the last search found, linked until they are created */
+    this.found = new Set();
     this.scanning = undefined;
     this.generation = 0;
     this.tickTimer = undefined;
@@ -219,6 +226,7 @@ export class ArcamApp {
     for (const id of [...this.wakeChecks.keys()]) {
       this.cancelWakeCheck(id);
     }
+    this.wakeWindows.clear();
     if (this.persistTimer) {
       this.timers.clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
@@ -233,7 +241,12 @@ export class ArcamApp {
       return Promise.resolve();
     }
     return Promise.resolve()
-      .then(() => (this.createdStale ? this.refreshCreated() : undefined))
+      .then(async () => {
+        if (this.createdStale) {
+          await this.refreshCreated();
+          this.syncLinks();
+        }
+      })
       .then(() => this.updateStatus())
       .catch((err) => this.logger.warn(`Background round failed: ${err.message}`));
   }
@@ -330,7 +343,12 @@ export class ArcamApp {
     return link && link.lastError && !link.connected ? null : undefined;
   }
 
-  /** One link per typed address and per known device. */
+  /**
+   * One link per typed address, per device created in Gladys, and per device
+   * the last search found (until it is created). A device known in /data
+   * but neither typed nor created gets no connection: some Arcam devices
+   * accept a single IP control client.
+   */
   syncLinks({ retry = false } = {}) {
     if (!this.started) {
       return;
@@ -340,7 +358,9 @@ export class ArcamApp {
       wanted.set(addressKey(address), address);
     }
     for (const device of this.devices) {
-      wanted.set(addressKey(device), { host: device.host, port: device.port });
+      if (this.created.has(device.id) || this.found.has(device.id)) {
+        wanted.set(addressKey(device), { host: device.host, port: device.port });
+      }
     }
     for (const [key, link] of this.links) {
       if (!wanted.has(key)) {
@@ -387,8 +407,10 @@ export class ArcamApp {
         this.schedulePublish(device.id, 0);
       }
     } else if (event === 'update') {
-      if (this.data.devices[id]) {
+      const device = this.data.devices[id];
+      if (device) {
         this.schedulePublish(id);
+        this.capInWakeWindow(device, link);
       }
     } else if (event === 'failed') {
       // The device known at this address does not answer: power 0.
@@ -602,11 +624,17 @@ export class ArcamApp {
       // Optional: the typed addresses work without it.
       this.logger.warn(`SSDP search failed: ${err.message}`);
     }
-    const known = new Set(this.devices.map((d) => d.host));
+    const known = new Map(this.devices.map((d) => [d.host, d]));
     const hosts = [];
     for (const result of (Array.isArray(results) ? results : []).slice(0, LIMITS.scanResults)) {
       const host = result?.source_ip;
-      if (isLanAddress(host) && !known.has(host) && !hosts.includes(host)) {
+      if (!isLanAddress(host) || hosts.includes(host)) {
+        continue;
+      }
+      if (known.has(host)) {
+        // Already known: linked again until it is created, not probed twice.
+        this.found.add(known.get(host).id);
+      } else {
         hosts.push(host);
       }
     }
@@ -622,7 +650,9 @@ export class ArcamApp {
           timings: this.timings,
           connect: this.connect,
         });
-        if (!stopped() && this.remember(address, info)) {
+        const device = stopped() ? undefined : this.remember(address, info);
+        if (device) {
+          this.found.add(device.id);
           changed = true;
         }
       } catch (err) {
@@ -728,9 +758,15 @@ export class ArcamApp {
    * confirmation" (the pushed state shows what the device did).
    */
   async send(device, link, { cc, data }, started, context) {
-    context.mayHaveSent = true;
     try {
-      return await link.request(cc, data, this.remaining(started), { urgent: true });
+      // Marked "may have been sent" only when the frame is written: a request
+      // dropped while waiting behind another one was never sent.
+      return await link.request(cc, data, this.remaining(started), {
+        urgent: true,
+        onWrite: () => {
+          context.mayHaveSent = true;
+        },
+      });
     } catch (err) {
       if (err.kind === ERROR_KINDS.TIMEOUT || err.kind === ERROR_KINDS.CLOSED) {
         throw new DeviceError(ERROR_KINDS.TIMEOUT, 'Sent, without confirmation from the device', {
@@ -786,6 +822,11 @@ export class ArcamApp {
       case FEATURES.POWER_ON: {
         // A new press starts over: the check chain of the previous one stops.
         this.cancelWakeCheck(device.id);
+        if (supports(family, CC.VOLUME)) {
+          // However slow the wake-up, the first update that shows the device
+          // on above the cap within `wakeWindow` lowers it.
+          this.wakeWindows.set(device.id, this.now() + this.timings.wakeWindow);
+        }
         await send(REQUESTS.power(family, true));
         if (!supports(family, CC.VOLUME)) {
           return undefined;
@@ -796,12 +837,17 @@ export class ArcamApp {
         const done = await this.capVolume(device, link, () =>
           Math.min(this.timings.preRead, this.remaining(started) - 100),
         ).catch(() => false);
-        if (!done) {
+        if (done) {
+          this.wakeWindows.delete(device.id);
+        } else {
           this.capAfterWake(device, 1);
         }
         return undefined;
       }
       case FEATURES.STANDBY:
+        // Standby ends the wake-up follow-up: nothing to cap any more.
+        this.cancelWakeCheck(device.id);
+        this.wakeWindows.delete(device.id);
         await send(REQUESTS.power(family, false));
         return undefined;
       case FEATURES.VOLUME: {
@@ -953,7 +999,7 @@ export class ArcamApp {
         if (!link || !current()) {
           return !current();
         }
-        return this.capVolume(device, link, () => this.timings.preRead);
+        return this.capVolume(device, link, this.deadline(this.timings.preRead));
       })
         .catch(() => false)
         .then((done) => {
@@ -962,11 +1008,60 @@ export class ArcamApp {
           }
           if (done) {
             this.wakeChecks.delete(device.id);
+            this.wakeWindows.delete(device.id);
           } else {
             this.capAfterWake(device, attempt + 1, chain);
           }
         });
     }, this.timings.wakeCheckDelay);
+  }
+
+  /** A budget function for one deadline `ms` from now (every request of a check shares it). */
+  deadline(ms) {
+    const end = this.now() + ms;
+    return () => end - this.now();
+  }
+
+  /**
+   * Within the wake-up window opened by a Power on of Gladys: the first
+   * update that shows the device on with its volume known closes it, after
+   * lowering the volume to the cap (through the device queue) when above.
+   * A device slower to wake up than the check chain is still capped.
+   */
+  capInWakeWindow(device, link) {
+    const until = this.wakeWindows.get(device.id);
+    if (until === undefined) {
+      return;
+    }
+    if (this.now() > until) {
+      this.wakeWindows.delete(device.id);
+      return;
+    }
+    const { power, volume } = link.state;
+    if (power !== true || !Number.isInteger(volume) || this.wakeCapping.has(device.id)) {
+      return;
+    }
+    if (volume <= this.config.maxVolume) {
+      this.wakeWindows.delete(device.id);
+      return;
+    }
+    this.wakeCapping.add(device.id);
+    const generation = this.generation;
+    this.enqueue(device.id, async () => {
+      const current = this.connectedLink(device);
+      if (generation !== this.generation || !current || !this.wakeWindows.has(device.id)) {
+        return false;
+      }
+      return this.capVolume(device, current, this.deadline(this.timings.preRead));
+    })
+      .catch(() => false)
+      .then((done) => {
+        this.wakeCapping.delete(device.id);
+        if (done) {
+          this.wakeWindows.delete(device.id);
+          this.cancelWakeCheck(device.id);
+        }
+      });
   }
 
   // --- Device lifecycle --------------------------------------------------------------
@@ -977,6 +1072,7 @@ export class ArcamApp {
       return;
     }
     this.created.add(device.id);
+    this.syncLinks();
     // The SDK forgot what was published for this device: everything again.
     await this.publishStates(device);
     await this.updateStatus();
@@ -986,6 +1082,8 @@ export class ArcamApp {
     const device = this.deviceOf(gladysDevice);
     if (device) {
       this.created.delete(device.id);
+      this.found.delete(device.id);
+      this.syncLinks();
       await this.updateStatus();
     }
   }

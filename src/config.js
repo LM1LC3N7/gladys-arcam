@@ -12,11 +12,9 @@ export const DEFAULT_CONFIG = {
   max_volume: MAX_VOLUME.default,
 };
 
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
-
 /**
- * The address of a device typed by the user: an IPv4 address or a host name,
- * with an optional port (50000 by default; a pasted URL is reduced to its
+ * The address of a device typed by the user: an IPv4 address, with an
+ * optional port (50000 by default; a pasted URL is reduced to its
  * host and port).
  * @returns {{ host: string, port: number } | undefined} undefined when invalid or empty.
  */
@@ -38,13 +36,9 @@ export function parseAddress(raw) {
   if (!Number.isInteger(port) || port < 1 || port > 65535 || host.length > 253) {
     return undefined;
   }
-  if (isIP(host) === 4) {
-    return { host, port };
-  }
-  if (/^[\d.]+$/.test(host)) {
-    return undefined;
-  }
-  return host.split('.').every((label) => LABEL.test(label)) ? { host, port } : undefined;
+  // IPv4 only: the address is the identity of a device, and a host name
+  // next to its IP address would give the same device twice.
+  return isIP(host) === 4 ? { host, port } : undefined;
 }
 
 export const addressKey = ({ host, port }) => (port === DEFAULT_PORT ? host : `${host}:${port}`);

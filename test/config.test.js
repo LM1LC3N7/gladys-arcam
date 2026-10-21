@@ -11,16 +11,18 @@ test('the defaults: no address, the default cap', () => {
   });
 });
 
-test('addresses: IPv4 or host name, port 50000 by default, duplicates and junk set aside', () => {
+test('addresses: IPv4 only, port 50000 by default, duplicates and junk set aside', () => {
   const config = normalizeConfig({
-    addresses: '192.168.1.40, 192.168.1.40:50000; avr.local:6000 tcp://10.0.0.2/x nope! 999.1.1.1',
+    addresses:
+      '192.168.1.40, 192.168.1.40:50000; 10.0.0.3:6000 tcp://10.0.0.2/x nope! 999.1.1.1 avr.local localhost:6000',
   });
   assert.deepEqual(config.addresses, [
     { host: '192.168.1.40', port: 50000 },
-    { host: 'avr.local', port: 6000 },
+    { host: '10.0.0.3', port: 6000 },
     { host: '10.0.0.2', port: 50000 },
   ]);
-  assert.deepEqual(config.invalid, ['nope!', '999.1.1.1']);
+  // A host name next to the IP address would give the same device twice.
+  assert.deepEqual(config.invalid, ['nope!', '999.1.1.1', 'avr.local', 'localhost:6000']);
   assert.equal(parseAddress(''), undefined);
   assert.equal(parseAddress('host:0'), undefined);
   assert.equal(parseAddress('host:70000'), undefined);
@@ -29,7 +31,7 @@ test('addresses: IPv4 or host name, port 50000 by default, duplicates and junk s
 
 test('the platform id of an address is stable and has no separator of the external ids', () => {
   assert.equal(platformId({ host: '192.168.1.40', port: 50000 }), '192.168.1.40_50000');
-  assert.ok(!platformId({ host: 'avr.local', port: 6000 }).includes(':'));
+  assert.ok(!platformId({ host: '10.0.0.3', port: 6000 }).includes(':'));
 });
 
 test('the volume cap: an integer 1..99, the default for anything unreadable', () => {

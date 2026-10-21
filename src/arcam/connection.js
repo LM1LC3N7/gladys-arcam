@@ -189,9 +189,12 @@ export class Session {
    * Sends one command frame and resolves with the data of its answer.
    * UNREACHABLE or BUDGET: nothing was sent. After the frame left, TIMEOUT
    * or CLOSED mark a request that may have reached the device (`sent: true`).
-   * `urgent` requests (commands) go before the reads waiting.
+   * `urgent` requests (commands) go before the reads waiting. A request
+   * still waiting at its deadline is dropped then (its own timer), never
+   * written. `onWrite` is called just before the frame is written: from then
+   * on, it may have reached the device.
    */
-  request(zone, cc, data, timeoutMs, { urgent = false } = {}) {
+  request(zone, cc, data, timeoutMs, { urgent = false, onWrite } = {}) {
     if (!this.open) {
       return Promise.reject(
         new DeviceError(ERROR_KINDS.UNREACHABLE, 'Not connected: nothing sent'),
@@ -211,10 +214,19 @@ export class Session {
         frame: encodeCommand(zone, cc, data),
         deadline: Date.now() + timeoutMs,
         urgent,
+        onWrite,
         resolve,
         reject,
         timer: undefined,
       };
+      // Waiting behind the request on the wire: dropped at its own deadline.
+      item.timer = setTimeout(() => {
+        const index = this.waiting.indexOf(item);
+        if (index !== -1) {
+          this.waiting.splice(index, 1);
+          reject(new DeviceError(ERROR_KINDS.BUDGET, 'No time left: nothing sent'));
+        }
+      }, timeoutMs);
       if (urgent) {
         const index = this.waiting.findIndex((w) => !w.urgent);
         this.waiting.splice(index === -1 ? this.waiting.length : index, 0, item);
@@ -228,6 +240,7 @@ export class Session {
   next() {
     while (!this.current && this.waiting.length > 0 && this.open) {
       const item = this.waiting.shift();
+      clearTimeout(item.timer);
       const left = item.deadline - Date.now();
       if (left <= 0) {
         item.reject(new DeviceError(ERROR_KINDS.BUDGET, 'No time left: nothing sent'));
@@ -248,6 +261,7 @@ export class Session {
         this.next();
       }, left);
       try {
+        item.onWrite?.();
         this.socket.write(item.frame);
       } catch (err) {
         clearTimeout(item.timer);
@@ -293,6 +307,7 @@ export class Session {
       );
     }
     for (const item of this.waiting.splice(0)) {
+      clearTimeout(item.timer);
       item.reject(new DeviceError(ERROR_KINDS.UNREACHABLE, 'Connection closed: nothing sent'));
     }
     for (const waiter of this.amxWaiters.splice(0)) {

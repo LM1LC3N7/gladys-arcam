@@ -170,3 +170,39 @@ up to date at the end of every milestone.
   `DEVICE_FEATURE_UNITS_BY_CATEGORY` lists none for music, television, text,
   button or unknown. Store category `multimedia`.
 - Zone 1 only in v1, as the main zone of every model.
+
+### Review 1 (2026-10-21)
+
+- I1, wake-up window: a Power on of Gladys opens a window of 120 s
+  (`wakeWindow`) for the device. Within it, the first update showing the
+  device on with its volume known closes it: above the cap, the volume is
+  lowered first (through the device queue, once at a time). The 6 checks
+  every 2.5 s stay; a check, the window or a Power on read under the cap
+  close it; Standby and `stop()` clear it. A volume turned up on the device
+  after the window closed is left alone.
+- I2: each request waiting behind the one on the wire has its own timer and
+  is dropped ("nothing sent") at its deadline; a command is marked "may have
+  been sent" only when its frame is written (`onWrite`), so the ack deadline
+  never says "sent, without confirmation" for a frame never written.
+- I3: tests for the slow wake-up, one chain per device (Standby and
+  `stop()` end it), the late answers, commands before the reads waiting,
+  Standby before the commands waiting, a command dropped at its deadline, a
+  command behind a silent read, and unmuting with the volume unknown. The
+  fake device has per-code delays, silent codes, refused reads and a slow
+  boot.
+- M1: a wake-up check shares one 1.2 s deadline over its three requests;
+  Standby cancels the chain and the window before it is sent.
+- M2: one read of the full state at a time per connection (the wake read
+  and the 5-minute refresh join the one running).
+- M3: addresses are IPv4 only (host names refused, said in the status): a
+  host name next to the IP address gave two devices and two connections.
+- M4: links only for the typed addresses, the devices created in Gladys and
+  the devices of the last search until they are created (or deleted). A
+  device in /data otherwise stays in the Discovery tab without a connection.
+- M5 (kept, known limit, as arcam-fmj): a false frame start (`0x21` with a
+  large length byte) holds the frames behind it until its announced length
+  arrived (261 bytes at most), then the scan starts again one byte later;
+  the 25 s silence close covers the worst case.
+- M6: the SSDP filter keeps addresses ending in .255 (hosts of a /16); the
+  limited broadcast, loopback, public, multicast and metadata addresses stay
+  refused.

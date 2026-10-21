@@ -32,7 +32,24 @@ the notes of the version's GitHub Release.
   after 10 s, then at intervals doubled up to 5 minutes.
 - "Find the devices" and "Check the devices" buttons.
 - Unmuting lowers a volume above the cap to the cap first; Power on brings
-  the volume back to the cap after the wake-up.
+  the volume back to the cap after the wake-up, however slow (up to 2
+  minutes after the press, until the device reports its volume).
+- Only the devices typed, created in Gladys or found by the last search keep
+  a connection (some Arcam devices accept a single IP control client).
+
+### Fixed
+
+- A command waiting behind a silent read is dropped at its own deadline and
+  reported "nothing sent", never "sent, without confirmation".
+- Standby ends the wake-up checks of a Power on; a wake-up check holds the
+  device queue 1.2 s at most.
+- One read of the full state at a time per device.
+- Addresses ending in .255 found by the search are probed (hosts of a /16).
+
+### Changed
+
+- Addresses are IPv4 only (a host name next to the IP address gave the same
+  device twice).
 - Standby and mute go before the commands waiting for a device.
 
 ### Security

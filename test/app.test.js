@@ -512,14 +512,22 @@ test('the known devices are kept in /data; a model given once is kept', async (t
 });
 
 test('isLanAddress: local IPv4 only', () => {
-  for (const ok of ['10.1.2.3', '172.16.0.9', '192.168.1.40', '100.64.0.1', '169.254.1.1']) {
+  for (const ok of [
+    '10.1.2.3',
+    '10.1.2.255',
+    '172.16.0.9',
+    '192.168.1.40',
+    '100.64.0.1',
+    '169.254.1.1',
+  ]) {
     assert.equal(isLanAddress(ok), true, ok);
   }
   for (const bad of [
     '8.8.8.8',
     '127.0.0.1',
     '0.0.0.0',
-    '192.168.1.255',
+    '255.255.255.255',
+    '172.15.0.1',
     '224.0.0.1',
     '169.254.169.254',
     'fe80::1',
@@ -528,4 +536,150 @@ test('isLanAddress: local IPv4 only', () => {
   ]) {
     assert.equal(isLanAddress(bad), false, String(bad));
   }
+});
+
+// --- Review 1: the safety paths -----------------------------------------------------
+
+const rc5Frames = (fake, code) =>
+  writes(fake, CC.SIMULATE_RC5).filter((c) => c.data[0] === code[0] && c.data[1] === code[1]);
+
+test('a device slower to wake up than the checks is still brought back to the cap', async (t) => {
+  const {
+    gladys,
+    device: fake,
+    app,
+    id,
+  } = await setup(t, {
+    deviceOptions: { state: { power: 0, volume: 80 }, bootMs: 600 },
+    // 6 checks every 30 ms: over long before the device is on.
+    timings: { wakeCheckDelay: 30 },
+  });
+  const device = await createDevice(gladys, id);
+  assert.equal((await set(gladys, device, 'power_on')).success, true);
+  await waitFor(() => fake.state.power === 1, 'the slow boot');
+  await waitFor(() => fake.state.volume === 40, 'the volume back to the cap after the boot');
+  await waitFor(() => !app.wakeWindows.has(Object.keys(app.data.devices)[0]), 'the window closed');
+  // Once settled, a volume turned up on the device itself is left alone.
+  fake.change(CC.VOLUME, 'volume', 70);
+  await waitFor(() => gladys.fake.lastState(id('volume')) === 70, 'the knob');
+  await settle(100);
+  assert.equal(fake.state.volume, 70);
+});
+
+test('one wake-up check chain per device; Standby and stop() end it', async (t) => {
+  const {
+    gladys,
+    device: fake,
+    app,
+    id,
+  } = await setup(t, {
+    deviceOptions: { state: { power: 0, volume: 80 }, bootMs: 5_000 },
+    timings: { wakeCheckDelay: 200 },
+  });
+  const device = await createDevice(gladys, id);
+  const deviceId = Object.keys(app.data.devices)[0];
+  assert.equal((await set(gladys, device, 'power_on')).success, true);
+  const first = app.wakeChecks.get(deviceId);
+  assert.ok(first, 'a chain after Power on');
+  assert.equal((await set(gladys, device, 'power_on')).success, true);
+  assert.equal(app.wakeChecks.size, 1, 'one chain per device');
+  assert.notEqual(app.wakeChecks.get(deviceId), first, 'the new press replaced it');
+  assert.equal((await set(gladys, device, 'standby')).success, true);
+  assert.equal(app.wakeChecks.size, 0, 'Standby ends the chain');
+  assert.equal(app.wakeWindows.size, 0, 'and the window');
+  assert.equal((await set(gladys, device, 'power_on')).success, true);
+  assert.equal(app.wakeChecks.size, 1);
+  await app.stop();
+  assert.equal(app.wakeChecks.size, 0, 'stop() clears the chains');
+  assert.equal(app.wakeWindows.size, 0);
+  assert.equal(writes(fake, CC.VOLUME).length, 0, 'never written while off');
+});
+
+test('Standby goes before the commands waiting for the device', async (t) => {
+  const { gladys, device: fake, id } = await setup(t);
+  const device = await createDevice(gladys, id);
+  fake.delays[CC.VOLUME] = 300;
+  const volume = set(gladys, device, 'volume', 20);
+  await settle(50);
+  const source = set(gladys, device, 'source', 'CD');
+  const standby = set(gladys, device, 'standby');
+  await Promise.all([volume, source, standby]);
+  const at = (code) => fake.commands.indexOf(rc5Frames(fake, code)[0]);
+  assert.ok(at([16, 124]) !== -1 && at([16, 118]) !== -1);
+  assert.ok(at([16, 124]) < at([16, 118]), 'the standby before the source waiting');
+});
+
+test('a command still waiting at its deadline is dropped, never sent late', async (t) => {
+  const { gladys, device: fake, id, logs } = await setup(t, { timings: { commandBudget: 400 } });
+  const device = await createDevice(gladys, id);
+  fake.delays[CC.VOLUME] = 2_000;
+  const volume = set(gladys, device, 'volume', 20);
+  const source = await set(gladys, device, 'source', 'CD');
+  assert.equal(source.success, false);
+  assert.equal((await volume).success, false);
+  assert.ok(
+    logs.some((l) => /:source failed: .*nothing sent/.test(l)),
+    'the source: nothing sent',
+  );
+  await settle(500);
+  assert.equal(rc5Frames(fake, [16, 118]).length, 0, 'the source never reached the device');
+});
+
+test('a command behind a silent background read: "nothing sent", no frame written', async (t) => {
+  const {
+    gladys,
+    device: fake,
+    app,
+    id,
+    logs,
+  } = await setup(t, {
+    timings: { commandBudget: 400 },
+  });
+  const device = await createDevice(gladys, id);
+  fake.silentCodes.add(CC.INCOMING_AUDIO_FORMAT);
+  const link = [...app.links.values()][0];
+  link.request(CC.INCOMING_AUDIO_FORMAT, [0xf0], 2_000).catch(() => {});
+  const ack = await set(gladys, device, 'volume', 20);
+  assert.equal(ack.success, false);
+  assert.ok(logs.some((l) => /:volume failed: .*nothing sent/.test(l)));
+  assert.ok(!logs.some((l) => /:volume failed: Sent, without confirmation/.test(l)));
+  assert.equal(writes(fake, CC.VOLUME).length, 0);
+});
+
+test('unmuting with the volume unknown is refused, nothing sent', async (t) => {
+  const {
+    gladys,
+    device: fake,
+    id,
+  } = await setup(t, {
+    deviceOptions: { state: { mute: 0x00, volume: 70 }, refuse: [CC.VOLUME] },
+  });
+  const device = await createDevice(gladys, id);
+  assert.equal((await set(gladys, device, 'mute')).success, false);
+  assert.equal(fake.state.mute, 0x00, 'still muted');
+  assert.equal(writes(fake, CC.SIMULATE_RC5).length, 0, 'no unmute code');
+  assert.equal(writes(fake, CC.VOLUME).length, 0);
+});
+
+test('a device known in /data but neither typed nor created gets no connection', async (t) => {
+  const store = new MemoryStore({
+    devices: {
+      '127.0.0.1_50999': {
+        id: '127.0.0.1_50999',
+        host: '127.0.0.1',
+        port: 50999,
+        model: 'AVR20',
+        sourceOptions: [],
+        audioModeOptions: [],
+      },
+    },
+  });
+  const { app, gladys } = await setup(t, { config: { addresses: '' }, store });
+  assert.equal(Object.keys(app.data.devices).length, 1);
+  assert.equal(app.links.size, 0);
+  // Still offered in the Discovery tab: created, it gets its connection.
+  const offered = gladys.fake.discoveredDevices.find((d) => d.external_id.endsWith('_50999'));
+  assert.ok(offered);
+  await gladys.fake.deviceCreated(offered);
+  assert.equal(app.links.size, 1);
 });
