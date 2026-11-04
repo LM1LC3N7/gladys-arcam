@@ -49,6 +49,12 @@ up to date at the end of every milestone.
 - [ ] **Milestone 4 — first release**: Docker image build check, Release
       workflow, topic, then the store validator once the image is published.
 
+## Next patch
+
+- Test min/max (`test/coreFeature.test.js` or similar): strip empty
+  `supported_options` only for the SA, ST and PA families, so an accidental
+  empty list on 450, 860 or HDA fails it (review vague7-r1).
+
 ## Decisions
 
 - Forum: no dedicated topic, no post from this module's work; one recap per
