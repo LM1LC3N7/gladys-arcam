@@ -206,3 +206,14 @@ up to date at the end of every milestone.
 - M6: the SSDP filter keeps addresses ending in .255 (hosts of a /16); the
   limited broadcast, loopback, public, multicast and metadata addresses stay
   refused.
+- **SDK `^0.16.0`** (2026-11-04, migration wave 7): it adds the ai, tts and
+  music types; no effect here (`poll_frequency` unused, the devices carry
+  `should_poll: false`). Every feature already had a numeric `min` and `max`;
+  `test/helpers/coreFeature.js` now checks each one against the core model.
+  `npm test` runs with `--test-timeout=60000`. `keywords`, `countries` and
+  `gladys_version >= 5.3.0` wait until Gladys 5.3 is widespread.
+  The SA and ST stereo models (no audio mode) and the PA power amplifiers (no
+  source either) publish the Source / Audio mode selects with an empty
+  `supported_options`: the core accepts it (it syncs the options to none);
+  dropping those features for these families would be a feature removed from
+  created devices, left as is.

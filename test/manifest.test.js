@@ -6,8 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
+import { audioModesOf, FAMILY, SOURCE_LABELS, sourcesOf } from '../src/arcam/protocol.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { ACTIONS, MAX_VOLUME, SSDP_ST } from '../src/constants.js';
+import { buildDevice } from '../src/model.js';
+import { assertCoreDevice } from './helpers/coreFeature.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const manifest = JSON.parse(read('gladys-assistant-integration.json'));
@@ -131,4 +135,38 @@ test('the image ships the license and the third-party notices', () => {
   assert.match(notices, /arcam-fmj 3\.0\.1\.post1/);
   assert.match(notices, /Copyright \(c\) 2016 Joakim Plate/);
   assert.match(notices, /Permission is hereby granted, free of charge/);
+});
+
+test('every feature of every model family has a numeric min and max and the other core fields', () => {
+  const gladys = createFakeGladys();
+  let features = 0;
+  for (const family of Object.values(FAMILY)) {
+    const device = {
+      id: `10.0.0.${features}_50000`,
+      host: `10.0.0.${features}`,
+      port: 50000,
+      model: family,
+      sourceOptions: sourcesOf(family).map((name) => ({
+        value: name,
+        label: SOURCE_LABELS[name] ?? name,
+      })),
+      audioModeOptions: audioModesOf(family),
+    };
+    const built = buildDevice(gladys, device);
+    // A family without sources or audio modes (power amplifiers, the SA and
+    // ST stereo models) sends an empty list: the core accepts it (it syncs
+    // the options to none), the helper wants options when the key is there.
+    const published = {
+      ...built,
+      features: built.features.map((f) => {
+        if (Array.isArray(f.supported_options) && f.supported_options.length === 0) {
+          const { supported_options: _none, ...rest } = f;
+          return rest;
+        }
+        return f;
+      }),
+    };
+    features += assertCoreDevice(published, family);
+  }
+  assert.equal(features, Object.values(FAMILY).length * 7);
 });

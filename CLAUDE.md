@@ -9,7 +9,8 @@ A Gladys Assistant **external integration** for Arcam AV receivers,
 processors and amplifiers, over their local IP control (TCP port 50000): a
 Node.js service (Node 22+, ESM, no build step) that runs in its own sandboxed
 Docker container and talks to Gladys through
-[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js).
+[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js)
+(v0.16).
 Its only runtime dependency is the SDK (the TCP client is `node:net`). It
 started from the official JavaScript template; the device logic is ported
 from the `arcam-fmj` Python library (MIT, see `THIRD_PARTY_NOTICES.md`).
@@ -19,7 +20,7 @@ Decisions are recorded in `TODO.md`.
 
 ```bash
 npm install
-npm test                                  # node --test, the built-in runner
+npm test                                  # node --test --test-timeout=60000
 node --test test/app.test.js              # one file
 node --test --test-name-pattern "volume"  # tests whose name matches
 npm run cover                             # regenerates cover.png
@@ -86,3 +87,9 @@ test/                             node --test, fake Gladys + fake Arcam device (
   UTF-8 without BOM (`test/encoding.test.js`).
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
   in English. Tests never leave the loopback interface.
+- **Features follow the core model.** Every feature has a numeric `min` and
+  `max` (0/0 for text and select), `read_only` and `has_feedback`: Gladys
+  answers HTTP 422 otherwise, and the SDK's fake Gladys does not check it
+  (`test/helpers/coreFeature.js` does). Devices carry `should_poll: false`
+  (Gladys 5.3 polls a device with `poll_frequency` unless it says
+  `should_poll: false`).
